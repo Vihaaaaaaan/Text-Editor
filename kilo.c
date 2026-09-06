@@ -10,6 +10,8 @@
 struct termios orig_termios;
 
 void 死ね(const char *s) {
+	write(STDOUT_FILENO, "\x1b[2j", 4);
+	write(STDOUT_FILENO, "\x1b[H", 3);
 	perror(s);
 	exit(1);
 }
@@ -38,19 +40,39 @@ void enable_raw_mode() {
 	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) 死ね("tcsetattr");
 }
 
+char editor_read_key() {
+	int nread;
+	char c;
+
+	while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+		if (nread == -1 && errno != EAGAIN) 死ね("read");
+	}
+	return c;
+}
+
+void editor_process_keypress() {
+	char c = editor_read_key();
+
+	switch(c) {
+		case CTRL_KEY('q'):
+			write(STDOUT_FILENO, "\x1b[2j", 4);
+			write(STDOUT_FILENO, "\x1b[H", 3);
+			exit(0);
+			break;
+	}
+}
+
+void editor_clear_screen() {
+	write(STDOUT_FILENO, "\x1b[2j", 4);
+	write(STDOUT_FILENO, "\x1b[H", 3);
+}
+
 int main() {
 	enable_raw_mode();
 
 	while (1) {
-		char c = '\0';
-		if (read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN) 死ね("read");
-		//check if c is a non-printable char
-		if (iscntrl(c)) {
-			printf("%d\r\n", c);
-		} else {
-			printf("%d ('%c')\r\n", c, c);
-		}
-		if (c == CTRL_KEY('q')) break;
+		editor_clear_screen();
+		editor_process_keypress();
 	}
 	return 0;
 }
