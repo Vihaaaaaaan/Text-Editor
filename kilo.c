@@ -19,7 +19,10 @@ void enable_raw_mode() {
 
 	tcgetattr(STDIN_FILENO, &raw);
 	//turn off terminal echo and canonical mode
-	raw.c_lflag &= ~(ECHO | ICANON);
+	raw.c_iflag &= ~(IXON | ICRNL | ISTRIP | INPCK | BRKINT);
+	raw.c_oflag &= ~(OPOST);
+	raw.c_cflag |= (CS8);
+	raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
 	tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
@@ -30,9 +33,9 @@ int main() {
 	while (read(STDIN_FILENO, &c, 1) == 1 && c != 'q') {
 		//check if c is a non-printable char
 		if (iscntrl(c)) {
-			printf("%d\n", c);
+			printf("%d\r\n", c);
 		} else {
-			printf("%d ('%c')\n", c, c);
+			printf("%d ('%c')\r\n", c, c);
 		}
 	}
 	return 0;
