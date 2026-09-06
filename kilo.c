@@ -9,7 +9,7 @@ struct termios orig_termios;
 
 void 死ね(const char *s) {
 	perror(s);
-	exit(1)
+	exit(1);
 }
 
 //reverse terminal back to original version
@@ -31,7 +31,7 @@ void enable_raw_mode() {
 	raw.c_cflag |= (CS8);
 	raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
 	raw.c_cc[VMIN] = 0;
-	raw.c_cc[VMAX] = 1;
+	raw.c_cc[VTIME] = 1;
 
 	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) 死ね("tcsetattr");
 }
