@@ -1,7 +1,12 @@
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <unistd.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <stdlib.h>
 #include <termios.h>
 #include <errno.h>
@@ -10,9 +15,29 @@
 #define CTRL_KEY(k) ((k) & 0x1f) 
 #define VERSION "0.0.1"
 
+enum editorKey {
+	ARROW_LEFT = 1000,
+	ARROW_RIGHT,
+	ARROW_UP,
+	ARROW_DOWN,
+	DEL_KEY,
+	PAGE_UP,
+	PAGE_DOWN
+};
+
+typedef struct erow {
+	int size;
+	char *chars;
+} erow;
+
 struct editorConfig {
+	int cx, cy;
+	int row_off;
+	int col_off;
 	int screen_rows;
 	int screen_cols;
+	int num_rows;
+	erow *row;
 	struct termios orig_termios;
 };
 
@@ -49,14 +74,44 @@ void enable_raw_mode() {
 	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) 死ね("tcsetattr");
 }
 
-char editor_read_key() {
+int editor_read_key() {
 	int nread;
 	char c;
 
 	while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
 		if (nread == -1 && errno != EAGAIN) 死ね("read");
 	}
-	return c;
+
+	if (c == '\x1b') {
+		char seq[3];
+
+		if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+		if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
+		if (seq[0] == '[') {
+			if (seq[1] >= '0' && seq[1] <= '9') {
+				if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+				if (seq[2] == '~') {
+					switch(seq[1]) {
+						case '3': return DEL_KEY;
+						case '5': return PAGE_UP;
+						case '6': return PAGE_DOWN;
+					}
+				}
+			} else {
+				switch (seq[1]) {
+					case 'A': return ARROW_UP;
+					case 'B': return ARROW_DOWN;
+					case 'C': return ARROW_RIGHT;
+					case 'D': return ARROW_LEFT;
+				}
+			}
+		}
+
+		return '\x1b';
+	} else {
+		return c;
+	}
 }
 
 int get_cursor_position(int *rows, int *cols) {
@@ -92,6 +147,33 @@ int get_window_size(int *rows, int *cols) {
 	}
 }
 
+void editor_append_row(char *s, size_t len) {
+	E.row = realloc(E.row, sizeof(erow) * (E.num_rows + 1));
+
+	int at = E.num_rows;
+	E.row[at].size = len;
+	E.row[at].chars = malloc(len + 1);
+	memcpy(E.row[at].chars, s, len);
+	E.row[at].chars[len] = '\0';
+	E.num_rows++;
+}
+
+void editor_open(char *file) {
+	FILE *fp = fopen(file, "r");
+	if (!fp) 死ね("fopen");
+
+	char *line = NULL;
+	size_t line_cap = 0;
+	ssize_t line_len;
+	line_len = getline(&line, &line_cap, fp);
+	while ((line_len = getline(&line, &line_cap, fp)) != -1) {
+		while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r')) line_len--;
+		editor_append_row(line, line_len);	
+	}
+	free(line);
+	fclose(fp);
+}
+
 struct abuf {
 	char *b;
 	int len;
@@ -112,8 +194,41 @@ void ab_free(struct abuf *ab) {
 	free(ab->b);
 }
 
+void editor_move_cursor(int key) {
+	erow *row = (E.cy >= E.num_rows) ? NULL : &E.row[E.cy];
+
+	switch (key) {
+		case ARROW_LEFT:
+			if (E.cx != 0) {
+				E.cx--;
+			}
+			break;
+		case ARROW_RIGHT:
+			if (row && E.cx < row->size) {
+				E.cx++;
+			}
+			break;
+		case ARROW_UP:
+			if (E.cy != 0) {
+				E.cy--;
+			}
+			break;
+		case ARROW_DOWN:
+			if (E.cy != E.num_rows) {
+				E.cy++;
+			}
+			break;
+	}
+
+	row = (E.cy >= E.num_rows) ? NULL : &E.row[E.cy];
+	int row_len = row ? row->size : 0;
+	if (E.cx > row_len) {
+		E.cx = row_len;
+	}
+}
+
 void editor_process_keypress() {
-	char c = editor_read_key();
+	int c = editor_read_key();
 
 	switch(c) {
 		case CTRL_KEY('q'):
@@ -121,6 +236,39 @@ void editor_process_keypress() {
 			write(STDOUT_FILENO, "\x1b[H", 3);
 			exit(0);
 			break;
+
+
+		case PAGE_UP:
+		case PAGE_DOWN:
+			{
+				int times = E.screen_rows;
+				while (times--) {
+					editor_move_cursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+				}
+			}
+			break;
+
+		case ARROW_UP:
+		case ARROW_LEFT:
+		case ARROW_DOWN:
+		case ARROW_RIGHT:
+			editor_move_cursor(c);
+			break;
+	}
+}
+
+void editor_scroll() {
+	if (E.cy < E.row_off) {
+		E.row_off = E.cy;
+	} 
+	if (E.cy >= E.row_off + E.screen_rows) {
+		E.row_off = E.cy - E.screen_rows + 1;
+	}
+	if (E.cx < E.col_off) {
+		E.col_off = E.cx;
+	}
+	if (E.cx >= E.col_off + E.screen_cols) {
+		E.col_off = E.cx - E.screen_cols + 1;
 	}
 }
 
@@ -128,23 +276,30 @@ void editor_draw_rows(struct abuf *ab) {
 	int y;
 
 	for (y = 0; y < E.screen_rows; y++) {
+		int file_row = y + E.row_off;
+		if (file_row >= E.num_rows) {
+			if (E.num_rows == 0 && y == E.screen_rows / 3) {
+				char welcome[80];
+				int welcome_len = snprintf(welcome, sizeof(welcome), "Kilo editor -- version %s", VERSION);
 		
-		if(y == E.screen_rows / 3) {
-			char welcome[80];
-			int welcome_len = snprintf(welcome, sizeof(welcome), "Kilo editor -- version %s", VERSION);
-		
-			if (welcome_len > E.screen_cols) welcome_len = E.screen_cols;
+				if (welcome_len > E.screen_cols) welcome_len = E.screen_cols;
 
-			int padding = (E.screen_cols - welcome_len) / 2;
-			if (padding) {
+				int padding = (E.screen_cols - welcome_len) / 2;
+				if (padding) {
+					ab_append(ab, "~", 1);
+					padding--;
+				}
+				while (padding--) ab_append(ab, " ", 1); 
+
+				ab_append(ab, welcome, welcome_len);
+			} else {
 				ab_append(ab, "~", 1);
-				padding--;
 			}
-			while (padding--) ab_append(ab, " ", 1); 
-
-			ab_append(ab, welcome, welcome_len);
 		} else {
-		ab_append(ab, "~", 1);
+			int len = E.row[file_row].size - E.col_off;
+			if (len < 0) len = 0;
+			if (len > E.screen_cols) len = E.screen_cols;
+			ab_append(ab, &E.row[file_row].chars[E.col_off], len);
 		}
 
 		ab_append(ab, "\x1b[K", 3);
@@ -155,12 +310,18 @@ void editor_draw_rows(struct abuf *ab) {
 }
 
 void editor_clear_screen() {
+	editor_scroll();
+
 	struct abuf ab = ABUF_INIT;
 
 	ab_append(&ab, "\x1b[?25l", 6);
 	ab_append(&ab, "\x1b[H", 3);
 
 	editor_draw_rows(&ab);
+
+	char buf[32];
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.row_off) + 1, (E.cx - E.col_off) + 1);
+	ab_append(&ab, buf, strlen(buf));
 
 	ab_append(&ab, "\x1b[H", 3);
 	ab_append(&ab, "\x1b[?25h", 6);
@@ -170,12 +331,22 @@ void editor_clear_screen() {
 }
 
 void init_editor() {
+	E.cx = 0;
+	E.cy = 0;
+	E.row_off = 0;
+	E.col_off = 0;
+	E.num_rows = 0;
+	E.row = NULL;
 	if (get_window_size(&E.screen_rows, &E.screen_cols) == -1) 死ね("get_window_size");
 }
 
-int main() {
+int main(int argc, char* argv[]) {
 	enable_raw_mode();
 	init_editor();
+	
+	if (argc >= 1) {
+		editor_open(argv[1]);
+	}
 
 	while (1) {
 		editor_clear_screen();
