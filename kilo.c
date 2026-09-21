@@ -14,6 +14,7 @@
 
 #define CTRL_KEY(k) ((k) & 0x1f) 
 #define VERSION "0.0.1"
+#define KILO_TAB_STOP 8
 
 enum editorKey {
 	ARROW_LEFT = 1000,
@@ -27,7 +28,9 @@ enum editorKey {
 
 typedef struct erow {
 	int size;
+	int rsize;
 	char *chars;
+	char *render;
 } erow;
 
 struct editorConfig {
@@ -147,6 +150,27 @@ int get_window_size(int *rows, int *cols) {
 	}
 }
 
+void editor_update_row(erow *row) {
+	int tabs = 0;
+	int i;
+
+	for (i = 0; i < row->size; i++) if (row->chars[i] == '\t') tabs++;
+	free(row->render);
+	row->render = malloc(row->size + tabs*(KILO_TAB_STOP - 1) + 1);
+
+	int idx = 0;
+	for (i = 0; i < row->size; i++) {
+		if (row->chars[i] == '\t') {
+			row->render[idx++] = ' ';
+			while (idx % KILO_TAB_STOP != 0) row->render[idx++] = ' ';
+		} else {
+			row->render[idx++] = row->chars[i];
+		}
+	}
+	row->render[idx] = '\0';
+	row->rsize = idx;
+}
+
 void editor_append_row(char *s, size_t len) {
 	E.row = realloc(E.row, sizeof(erow) * (E.num_rows + 1));
 
@@ -156,6 +180,10 @@ void editor_append_row(char *s, size_t len) {
 	memcpy(E.row[at].chars, s, len);
 	E.row[at].chars[len] = '\0';
 	E.num_rows++;
+
+	E.row[at].rsize = 0;
+	E.row[at].render = NULL;
+	editor_update_row(&E.row[at]);
 }
 
 void editor_open(char *file) {
@@ -201,11 +229,17 @@ void editor_move_cursor(int key) {
 		case ARROW_LEFT:
 			if (E.cx != 0) {
 				E.cx--;
+			} else if (E.cy > 0) {
+				E.cy--;
+				E.cx = E.row[E.cy].size;
 			}
 			break;
 		case ARROW_RIGHT:
 			if (row && E.cx < row->size) {
 				E.cx++;
+			} else if (row && E.cx == row->size) {
+				E.cy++;
+				E.cx = 0;
 			}
 			break;
 		case ARROW_UP:
@@ -296,10 +330,10 @@ void editor_draw_rows(struct abuf *ab) {
 				ab_append(ab, "~", 1);
 			}
 		} else {
-			int len = E.row[file_row].size - E.col_off;
+			int len = E.row[file_row].rsize - E.col_off;
 			if (len < 0) len = 0;
 			if (len > E.screen_cols) len = E.screen_cols;
-			ab_append(ab, &E.row[file_row].chars[E.col_off], len);
+			ab_append(ab, &E.row[file_row].render[E.col_off], len);
 		}
 
 		ab_append(ab, "\x1b[K", 3);
