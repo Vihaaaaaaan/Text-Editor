@@ -11,6 +11,8 @@
 #include <termios.h>
 #include <errno.h>
 #include <string.h>
+#include <time.h>
+#include <stdarg.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f) 
 #define VERSION "0.0.1"
@@ -43,6 +45,8 @@ struct editorConfig {
 	int num_rows;
 	erow *row;
 	char *file_name;
+	char statusmsg[80];
+	time_t statusmsg_time;
 	struct termios orig_termios;
 };
 
@@ -274,6 +278,7 @@ void editor_move_cursor(int key) {
 	if (E.cx > row_len) {
 		E.cx = row_len;
 	}
+
 }
 
 void editor_process_keypress() {
@@ -307,7 +312,6 @@ void editor_process_keypress() {
 }
 
 void editor_scroll() {
-	E.rx = 0;
 	if (E.cy < E.num_rows) {
 		E.rx = editor_get_rx(&E.row[E.cy], E.cx);
 	}
@@ -377,6 +381,14 @@ void editor_draw_status_bar(struct abuf *ab) {
 		}
 	}
 	ab_append(ab , "\x1b[m", 3);
+	ab_append(ab, "\r\n", 2);
+}
+
+void editor_draw_message_bar(struct abuf *ab) {
+	ab_append(ab, "\x1b[K", 3);
+	int msg_len = strlen(E.statusmsg);
+	if (msg_len < E.screen_cols) msg_len = E.screen_cols;
+	if(msg_len && time(NULL) - E.statusmsg_time < 5) ab_append(ab, E.statusmsg, msg_len);
 }
 
 void editor_clear_screen() {
@@ -389,6 +401,7 @@ void editor_clear_screen() {
 
 	editor_draw_rows(&ab);
 	editor_draw_status_bar(&ab);
+	editor_draw_message_bar(&ab);
 
 	char buf[32];
 	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.row_off) + 1, (E.rx - E.col_off) + 1);
@@ -401,6 +414,14 @@ void editor_clear_screen() {
 	ab_free(&ab);
 }
 
+void editor_set_status_message(const char *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+	va_end(ap);
+	E.statusmsg_time = time(NULL);
+}
+
 void init_editor() {
 	E.cx = 0;
 	E.cy = 0;
@@ -410,8 +431,10 @@ void init_editor() {
 	E.num_rows = 0;
 	E.row = NULL;
 	E.file_name = NULL;
+	E.statusmsg[0] = "\0";
+	E.statusmsg_time = 0;
 	if (get_window_size(&E.screen_rows, &E.screen_cols) == -1) 死ね("get_window_size");
-	E.screen_rows -= 1;
+	E.screen_rows -= 2;
 }
 
 int main(int argc, char* argv[]) {
@@ -421,6 +444,8 @@ int main(int argc, char* argv[]) {
 	if (argc >= 1) {
 		editor_open(argv[1]);
 	}
+	
+	editor_set_status_message("HELP: Ctrl-Q to quit");
 
 	while (1) {
 		editor_clear_screen();
