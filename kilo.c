@@ -35,12 +35,14 @@ typedef struct erow {
 
 struct editorConfig {
 	int cx, cy;
+	int rx;
 	int row_off;
 	int col_off;
 	int screen_rows;
 	int screen_cols;
 	int num_rows;
 	erow *row;
+	char *file_name;
 	struct termios orig_termios;
 };
 
@@ -150,6 +152,16 @@ int get_window_size(int *rows, int *cols) {
 	}
 }
 
+int editor_get_rx(erow *row, int cx) {
+	int rx = 0;
+	int i;
+	for (i = 0; i < cx; i++) {
+		if (row->chars[i] == '\t') rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
+		rx++;
+	}
+	return rx;
+}
+
 void editor_update_row(erow *row) {
 	int tabs = 0;
 	int i;
@@ -187,6 +199,9 @@ void editor_append_row(char *s, size_t len) {
 }
 
 void editor_open(char *file) {
+	free(E.file_name);
+	E.file_name = strdup(file);
+
 	FILE *fp = fopen(file, "r");
 	if (!fp) 死ね("fopen");
 
@@ -292,17 +307,21 @@ void editor_process_keypress() {
 }
 
 void editor_scroll() {
+	E.rx = 0;
+	if (E.cy < E.num_rows) {
+		E.rx = editor_get_rx(&E.row[E.cy], E.cx);
+	}
 	if (E.cy < E.row_off) {
 		E.row_off = E.cy;
 	} 
 	if (E.cy >= E.row_off + E.screen_rows) {
 		E.row_off = E.cy - E.screen_rows + 1;
 	}
-	if (E.cx < E.col_off) {
-		E.col_off = E.cx;
+	if (E.rx < E.col_off) {
+		E.col_off = E.rx;
 	}
-	if (E.cx >= E.col_off + E.screen_cols) {
-		E.col_off = E.cx - E.screen_cols + 1;
+	if (E.rx >= E.col_off + E.screen_cols) {
+		E.col_off = E.rx - E.screen_cols + 1;
 	}
 }
 
@@ -337,10 +356,27 @@ void editor_draw_rows(struct abuf *ab) {
 		}
 
 		ab_append(ab, "\x1b[K", 3);
-		if (y < E.screen_rows - 1) {
-			ab_append(ab, "\r\n", 2);
+		ab_append(ab, "\r\n", 2);
+	}
+}
+
+void editor_draw_status_bar(struct abuf *ab) {
+	ab_append(ab, "\x1b[7m", 4);
+	char status[80], rstatus[80];
+	int len = snprintf(status, sizeof(status), "%.20s - %d lines", E.file_name ? E.file_name : "[No name]", E.num_rows);
+	int rlen = snprintf(rstatus, sizeof(rstatus), "%d%d", E.cy + 1, E.num_rows);
+	if (len > E.screen_cols) len = E.screen_cols;
+	ab_append(ab, status, len);
+	while (len < E.screen_cols) {
+		if (E.screen_cols - len == rlen) {
+			ab_append(ab, rstatus, rlen);
+			break;
+		} else {
+			ab_append(ab, " ", 1);
+			len++;
 		}
 	}
+	ab_append(ab , "\x1b[m", 3);
 }
 
 void editor_clear_screen() {
@@ -352,9 +388,10 @@ void editor_clear_screen() {
 	ab_append(&ab, "\x1b[H", 3);
 
 	editor_draw_rows(&ab);
+	editor_draw_status_bar(&ab);
 
 	char buf[32];
-	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.row_off) + 1, (E.cx - E.col_off) + 1);
+	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.row_off) + 1, (E.rx - E.col_off) + 1);
 	ab_append(&ab, buf, strlen(buf));
 
 	ab_append(&ab, "\x1b[H", 3);
@@ -367,11 +404,14 @@ void editor_clear_screen() {
 void init_editor() {
 	E.cx = 0;
 	E.cy = 0;
+	E.rx = 0;
 	E.row_off = 0;
 	E.col_off = 0;
 	E.num_rows = 0;
 	E.row = NULL;
+	E.file_name = NULL;
 	if (get_window_size(&E.screen_rows, &E.screen_cols) == -1) 死ね("get_window_size");
+	E.screen_rows -= 1;
 }
 
 int main(int argc, char* argv[]) {
