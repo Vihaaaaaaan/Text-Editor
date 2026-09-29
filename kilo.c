@@ -174,6 +174,17 @@ int editor_get_rx(erow *row, int cx) {
 	return rx;
 }
 
+int editor_get_cx(erow *row, int rx) {
+	int cur_rx = 0;
+	int cx;
+	for (cx = 0; cx < row->size; cx++) {
+		if (row->chars[cx] == '\t') cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
+		cur_rx++;
+		if (cur_rx > rx) return cx;
+	}
+	return cx;
+}
+
 void editor_update_row(erow *row) {
 	int tabs = 0;
 	int i;
@@ -360,6 +371,25 @@ void editor_save() {
 	editor_set_status_message("I/O error: %s", strerror(errno));
 }
 
+void editor_find() {
+	char *query = editor_prompt("Search: %s (press esc to cancel)");
+	if (query == NULL) return;
+
+	int i;
+	for (i = 0; i < E.num_rows; i++) {
+		erow *row = &E.row[i];
+		char *match = strstr(row->render, query);
+		if (match) {
+			E.cy = i;
+			E.cx = editor_get_cx(row, match - row->render);
+			E.row_off = E.num_rows;
+			break;
+		}
+	}
+	free(query);
+}
+
+
 struct abuf {
 	char *b;
 	int len;
@@ -476,6 +506,10 @@ void editor_process_keypress() {
 
 		case CTRL_KEY('s'):
 			editor_save();
+			break;
+
+		case CTRL_KEY('f'):
+			editor_find();
 			break;
 
 		case BACKSPACE:
