@@ -15,11 +15,15 @@
 #include <stdarg.h>
 #include <fcntl.h>
 
+//Get the Ctrl version of the key
 #define CTRL_KEY(k) ((k) & 0x1f) 
+//Text editor version
 #define VERSION "0.0.1"
 #define KILO_TAB_STOP 8
+//How many times you need to press quit to exit without saving
 #define QUIT_TIMES 3
 
+//Special keys
 enum editorKey {
 	BACKSPACE = 127,
 	ARROW_LEFT = 1000,
@@ -31,6 +35,7 @@ enum editorKey {
 	PAGE_DOWN
 };
 
+//A text row struct
 typedef struct erow {
 	int size;
 	int rsize;
@@ -38,8 +43,11 @@ typedef struct erow {
 	char *render;
 } erow;
 
+//Terminal config for the editor
 struct editorConfig {
+	//cursor position
 	int cx, cy;
+	//Where the cursor is rendered
 	int rx;
 	int row_off;
 	int col_off;
@@ -56,11 +64,14 @@ struct editorConfig {
 
 struct editorConfig E;
 
+//Prototypes
 void editor_set_status_message(const char *fmt, ...);
 void editor_clear_screen();
 char *editor_prompt(char *prompt, void (callback)(char *, int));
 
+//Exit with an error
 void 死ね(const char *s) {
+	//clear screen and reset cursor position
 	write(STDOUT_FILENO, "\x1b[2J", 4);
 	write(STDOUT_FILENO, "\x1b[H", 3);
 	perror(s);
@@ -73,6 +84,7 @@ void disable_raw_mode() {
 		死ね("tcsetattr");
 }
 
+//Convert the terminal to raw mode
 void enable_raw_mode() {
 	if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) 死ね("tcgetattr");
 	atexit(disable_raw_mode);
@@ -91,6 +103,7 @@ void enable_raw_mode() {
 	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) 死ね("tcsetattr");
 }
 
+//read a key/sequence from input
 int editor_read_key() {
 	int nread;
 	char c;
@@ -102,6 +115,7 @@ int editor_read_key() {
 	if (c == '\x1b') {
 		char seq[3];
 
+		//check if it is just the escape key
 		if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
 		if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
 
@@ -116,6 +130,7 @@ int editor_read_key() {
 					}
 				}
 			} else {
+				//arrow keys
 				switch (seq[1]) {
 					case 'A': return ARROW_UP;
 					case 'B': return ARROW_DOWN;
@@ -131,6 +146,7 @@ int editor_read_key() {
 	}
 }
 
+//get the position of the cursor
 int get_cursor_position(int *rows, int *cols) {
 	char buf[32];
 	unsigned int i = 0;
@@ -151,6 +167,7 @@ int get_cursor_position(int *rows, int *cols) {
 	return 0;
 }
 
+//get size of the terminal window
 int get_window_size(int *rows, int *cols) {
 	struct winsize ws;
 
@@ -164,6 +181,7 @@ int get_window_size(int *rows, int *cols) {
 	}
 }
 
+//get the rx when given cx
 int editor_get_rx(erow *row, int cx) {
 	int rx = 0;
 	int i;
@@ -174,6 +192,7 @@ int editor_get_rx(erow *row, int cx) {
 	return rx;
 }
 
+//get cx when given rx
 int editor_get_cx(erow *row, int rx) {
 	int cur_rx = 0;
 	int cx;
@@ -185,6 +204,7 @@ int editor_get_cx(erow *row, int rx) {
 	return cx;
 }
 
+//render the row
 void editor_update_row(erow *row) {
 	int tabs = 0;
 	int i;
@@ -229,6 +249,7 @@ void editor_free_row(erow *row) {
 	free(row->chars);
 }
 
+//delete a row at a given location
 void editor_del_row(int at) {
 	if (at < 0 || at >= E.num_rows) return;
 	editor_free_row(&E.row[at]);
@@ -237,6 +258,7 @@ void editor_del_row(int at) {
 	E.dirty++;
 }
 
+//insert a char at a given index
 void editor_row_insert_char(erow *row, int at, int c) {
 	if (at < 0 || at > row->size) at = row->size;
 	row->chars = realloc(row->chars, row->size + 2);
@@ -247,6 +269,7 @@ void editor_row_insert_char(erow *row, int at, int c) {
 	E.dirty++;
 }
 
+//append a string at the end of the row
 void editor_row_append_string(erow *row, char *s, size_t len) {
 	row->chars = realloc(row->chars, row->size + len + 1);
 	memcpy(&row->chars[row->size], s, len);
@@ -256,6 +279,7 @@ void editor_row_append_string(erow *row, char *s, size_t len) {
 	E.dirty++;
 }
 
+//delete a char at a given location
 void editor_row_del_char(erow *row, int at) {
 	if (at < 0 || at > row->size) return;
 	memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
@@ -264,6 +288,7 @@ void editor_row_del_char(erow *row, int at) {
 	E.dirty++;
 }
 
+//insert the char
 void editor_insert_char(int c) {
 	if (E.cy == E.num_rows) {
 		editor_append_row(E.num_rows, "", 0);
@@ -272,6 +297,7 @@ void editor_insert_char(int c) {
 	E.cx++;
 }
 
+//insert a new line
 void editor_insert_new_line() {
 	if (E.cx == 0) {
 		editor_append_row(E.cy, "", 0);
@@ -287,6 +313,7 @@ void editor_insert_new_line() {
 	E.cx = 0;
 }
 
+//delete a a char
 void editor_del_char() {
 	if (E.cy == E.num_rows) return;
 	if (E.cx == 0 && E.cy == 0) return;
@@ -303,6 +330,7 @@ void editor_del_char() {
 	}
 }
 
+//convert all the rows into a string
 char *editor_rows_to_string(int *buf_len) {
 	int tot_len = 0;
 	int i;
@@ -321,6 +349,7 @@ char *editor_rows_to_string(int *buf_len) {
 	return buf;
 }
 
+//open a file
 void editor_open(char *file) {
 	free(E.file_name);
 	E.file_name = strdup(file);
@@ -341,6 +370,7 @@ void editor_open(char *file) {
 	E.dirty = 0;
 }
 
+//save current contents to the given filename
 void editor_save() {
 	if (E.file_name == NULL) {
 		E.file_name = editor_prompt("Save as %s (press esc to cancel)", NULL);
@@ -371,10 +401,12 @@ void editor_save() {
 	editor_set_status_message("I/O error: %s", strerror(errno));
 }
 
+//callback function for searching
 void editor_find_callback(char *query, int key) {
 	static int last_match = -1;
 	static int direction = 1;
 
+	//check input for 'quit' or moving to next result
 	if (key == '\x1b' || key == '\r') {
 		last_match = -1;
 		direction = 1;
@@ -387,7 +419,8 @@ void editor_find_callback(char *query, int key) {
 		last_match = -1;
 		direction = 1;
 	}
-
+	
+	//if there is no last match then always go forward
 	if (last_match == -1) direction = 1;
 	int current = last_match;
 	int i;
@@ -396,6 +429,7 @@ void editor_find_callback(char *query, int key) {
 		if (current == -1) current = E.num_rows - 1;
 		else if (current == E.num_rows) current = 0;
 		erow *row = &E.row[current];
+		//find match
 		char *match = strstr(row->render, query);
 		if (match) {
 			last_match = current;
@@ -408,7 +442,9 @@ void editor_find_callback(char *query, int key) {
 	free(query);
 }
 
+//main search function
 void editor_find() {
+	//save position of cursor prior to search
 	int saved_cx = E.cx;
 	int saved_cy = E.cy;
 	int saved_col_off = E.col_off;
@@ -427,7 +463,7 @@ void editor_find() {
 
 }
 
-
+//a buffer
 struct abuf {
 	char *b;
 	int len;
@@ -435,6 +471,7 @@ struct abuf {
 
 #define ABUF_INIT {NULL, 0};
 
+//append a string of length len to the buffer
 void ab_append(struct abuf *ab, const char *s, int len) {
 	char *new = realloc(ab->b, ab->len + len);
 
@@ -448,6 +485,7 @@ void ab_free(struct abuf *ab) {
 	free(ab->b);
 }
 
+//write a prompt that can accept input
 char *editor_prompt(char *prompt, void (callback) (char *, int)) {
 	size_t buf_size = 128;
 	char *buf = malloc(buf_size);
@@ -485,6 +523,7 @@ char *editor_prompt(char *prompt, void (callback) (char *, int)) {
 	}
 }
 
+//move the cursor depending on the input received
 void editor_move_cursor(int key) {
 	erow *row = (E.cy >= E.num_rows) ? NULL : &E.row[E.cy];
 
@@ -525,6 +564,7 @@ void editor_move_cursor(int key) {
 
 }
 
+//main function for deciding what happens on a given key input
 void editor_process_keypress() {
 	static int quit_times = QUIT_TIMES;
 	int c = editor_read_key();
@@ -588,6 +628,7 @@ void editor_process_keypress() {
 	quit_times = QUIT_TIMES;
 }
 
+//scroll the editor to the current cursor position
 void editor_scroll() {
 	if (E.cy < E.num_rows) {
 		E.rx = editor_get_rx(&E.row[E.cy], E.cx);
@@ -606,6 +647,7 @@ void editor_scroll() {
 	}
 }
 
+//draw all the rows in the buffer
 void editor_draw_rows(struct abuf *ab) {
 	int y;
 
@@ -641,6 +683,7 @@ void editor_draw_rows(struct abuf *ab) {
 	}
 }
 
+//draw the status bar at the bottom
 void editor_draw_status_bar(struct abuf *ab) {
 	ab_append(ab, "\x1b[7m", 4);
 	char status[80], rstatus[80];
@@ -668,6 +711,7 @@ void editor_draw_message_bar(struct abuf *ab) {
 	if(msg_len && time(NULL) - E.statusmsg_time < 5) ab_append(ab, E.statusmsg, msg_len);
 }
 
+//refresh the screen
 void editor_clear_screen() {
 	editor_scroll();
 
@@ -691,6 +735,7 @@ void editor_clear_screen() {
 	ab_free(&ab);
 }
 
+//set the status bar message to input
 void editor_set_status_message(const char *fmt, ...) {
 	va_list ap;
 	va_start(ap, fmt);
@@ -699,6 +744,7 @@ void editor_set_status_message(const char *fmt, ...) {
 	E.statusmsg_time = time(NULL);
 }
 
+//initialize all the variables
 void init_editor() {
 	E.cx = 0;
 	E.cy = 0;
@@ -719,6 +765,7 @@ int main(int argc, char* argv[]) {
 	enable_raw_mode();
 	init_editor();
 	
+	//open file if argument is given
 	if (argc >= 1) {
 		editor_open(argv[1]);
 	}
