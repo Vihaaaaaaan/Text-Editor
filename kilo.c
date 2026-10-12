@@ -269,7 +269,7 @@ void editor_update_row(erow *row) {
 }
 
 void editor_append_row(int at, char *s, size_t len) {
-	if (at < 0 || at >= E.num_rows) return;
+	if (at < 0 || at > E.num_rows) return;
 
 	E.row = realloc(E.row, sizeof(erow) * (E.num_rows + 1));
 	memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.num_rows - at));
@@ -738,6 +738,7 @@ void editor_draw_rows(struct abuf *ab) {
 			unsigned char *hl = &E.row[file_row].hl[E.col_off];
 			int current_colour = -1;
 			int i;
+			ab_append(ab, "~ ", 2);
 			for (i = 0; i < len; i++) {
 				if (hl[i] == HL_NORMAL) {
 					if (current_colour != -1) {
@@ -769,7 +770,7 @@ void editor_draw_status_bar(struct abuf *ab) {
 	ab_append(ab, "\x1b[7m", 4);
 	char status[80], rstatus[80];
 	int len = snprintf(status, sizeof(status), "%.20s - %d lines %s", E.file_name ? E.file_name : "[No name]", E.num_rows, E.dirty ? "(modified)" : "");
-	int rlen = snprintf(rstatus, sizeof(rstatus), "%d%d", E.cy + 1, E.num_rows);
+	int rlen = snprintf(rstatus, sizeof(rstatus), "%d:%d", E.cy + 1, E.num_rows);
 	if (len > E.screen_cols) len = E.screen_cols;
 	ab_append(ab, status, len);
 	while (len < E.screen_cols) {
@@ -788,8 +789,8 @@ void editor_draw_status_bar(struct abuf *ab) {
 void editor_draw_message_bar(struct abuf *ab) {
 	ab_append(ab, "\x1b[K", 3);
 	int msg_len = strlen(E.statusmsg);
-	if (msg_len < E.screen_cols) msg_len = E.screen_cols;
-	if(msg_len && time(NULL) - E.statusmsg_time < 5) ab_append(ab, E.statusmsg, msg_len);
+	if (msg_len > E.screen_cols) msg_len = E.screen_cols;
+	if (msg_len && time(NULL) - E.statusmsg_time < 5) ab_append(ab, E.statusmsg, msg_len);
 }
 
 //refresh the screen
@@ -847,7 +848,7 @@ int main(int argc, char* argv[]) {
 	init_editor();
 	
 	//open file if argument is given
-	if (argc >= 1) {
+	if (argc > 1) {
 		editor_open(argv[1]);
 	}
 	
